@@ -1,0 +1,96 @@
+[gd_scene format=3 uid="uid://dfsbxv1uas6xa"]
+
+[ext_resource type="Script" uid="uid://byirvvijxltmf" path="res://scenes/ui/hud.gd" id="1_hud"]
+[ext_resource type="Script" uid="uid://bi0v5oyue5px6" path="res://scenes/ui/pause_menu.gd" id="2_hqnrr"]
+
+[node name="HUD" type="CanvasLayer" unique_id=1242395570]
+process_mode = 3
+script = ExtResource("1_hud")
+
+[node name="MarginContainer" type="MarginContainer" parent="." unique_id=1684766015]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+theme_override_constants/margin_left = 16
+theme_override_constants/margin_top = 16
+theme_override_constants/margin_right = 16
+theme_override_constants/margin_bottom = 16
+
+[node name="VBox" type="VBoxContainer" parent="MarginContainer" unique_id=745428894]
+layout_mode = 2
+
+[node name="HealthBar" type="ProgressBar" parent="MarginContainer/VBox" unique_id=200039185]
+custom_minimum_size = Vector2(200, 20)
+layout_mode = 2
+value = 100.0
+
+[node name="ScoreLabel" type="Label" parent="MarginContainer/VBox" unique_id=916685712]
+layout_mode = 2
+text = "Score: 0"
+
+[node name="Crosshair" type="TextureRect" parent="." unique_id=1115342457]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -8.0
+offset_top = -8.0
+offset_right = 8.0
+offset_bottom = 8.0
+mouse_filter = 2
+
+[node name="InteractHint" type="Label" parent="." unique_id=1199196800]
+visible = false
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -100.0
+offset_top = 40.0
+offset_right = 100.0
+offset_bottom = 60.0
+text = "Press E to interact"
+horizontal_alignment = 1
+
+[node name="PauseMenu" type="Control" parent="." unique_id=1691226197]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource("2_hqnrr")
+
+[node name="PanelContainer" type="PanelContainer" parent="PauseMenu" unique_id=482222894]
+layout_mode = 0
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -120.0
+offset_top = -120.0
+offset_right = 120.0
+offset_bottom = 120.0
+
+[node name="VBox" type="VBoxContainer" parent="PauseMenu/PanelContainer" unique_id=144289999]
+layout_mode = 2
+theme_override_constants/separation = 12
+
+[node name="Label" type="Label" parent="PauseMenu/PanelContainer/VBox" unique_id=164158147]
+layout_mode = 2
+text = "PAUSED"
+horizontal_alignment = 1
+
+[node name="ResumeButton" type="Button" parent="PauseMenu/PanelContainer/VBox" unique_id=1848271626]
+layout_mode = 2
+text = "Resume"
+
+[node name="MainMenuButton" type="Button" parent="PauseMenu/PanelContainer/VBox" unique_id=896876058]
+layout_mode = 2
+text = "Main Menu"
+
+[node name="QuitButton" type="Button" parent="PauseMenu/PanelContainer/VBox" unique_id=449383265]
+layout_mode = 2
+text = "Quit"
