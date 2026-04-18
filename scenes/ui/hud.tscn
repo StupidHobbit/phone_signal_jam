@@ -29,6 +29,18 @@ value = 100.0
 layout_mode = 2
 text = "Score: 0"
 
+[node name="FpsLabel" type="Label" parent="." unique_id=2001000001]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -120.0
+offset_top = 8.0
+offset_right = -8.0
+offset_bottom = 28.0
+mouse_filter = 2
+text = "FPS: 0"
+horizontal_alignment = 2
+
 [node name="Crosshair" type="TextureRect" parent="." unique_id=1115342457]
 anchors_preset = 8
 anchor_left = 0.5

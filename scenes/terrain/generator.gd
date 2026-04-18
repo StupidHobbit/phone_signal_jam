@@ -85,11 +85,20 @@ func get_height(pos: Vector2) -> float:
 ##   tile   — tile index at this position (from get_value)
 ##   height — world-space height at this position (from get_height * cell_size)
 ##
+## Returns grass spawn parameters for a given position.
+##
+## Parameters:
+##   pos        — grid-space 2D position
+##   tile       — tile index at this position (from get_value)
+##   height     — world-space height (from get_height * cell_size)
+##   rand_value — caller-supplied random float in [0, 1] for density curve check
+##                (avoids calling randf() from a background thread)
+##
 ## Returns a Dictionary:
 ##   { "spawn":    bool  — whether to place a blade here
 ##     "scale":    float — base scale multiplier (1.0 = normal)
 ##     "rotation": float — Y rotation in radians, or -1 to use random }
-func get_grass(pos: Vector2, tile: int, height: float) -> Dictionary:
+func get_grass(pos: Vector2, tile: int, height: float, rand_value: float = 0.0) -> Dictionary:
 	var result := {"spawn": false, "scale": 1.0, "rotation": -1.0}
 
 	if not grass_enabled:
@@ -105,9 +114,10 @@ func get_grass(pos: Vector2, tile: int, height: float) -> Dictionary:
 		(height - grass_min_height) / max(height_range, 0.0001), 0.0, 1.0
 	)
 
-	# Optional density curve: maps normalised height to spawn probability
+	# Optional density curve: maps normalised height to spawn probability.
+	# Uses caller-supplied rand_value to stay thread-safe.
 	if grass_density_curve:
-		if randf() > grass_density_curve.sample(height_t):
+		if rand_value > grass_density_curve.sample(height_t):
 			return result
 
 	result["spawn"] = true

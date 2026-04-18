@@ -16,6 +16,8 @@ signal chunk_removed(chunk_index: Vector2)
 @export var chunk_load_radius: int = 0
 @export var map_update_interval: float = 0.1
 @export var grid_size: Vector2 = Vector2(51, 51)
+## How many ready chunks to spawn per frame. 1 = smoothest, higher = faster initial load.
+@export var chunks_per_frame: int = 1
 
 @export_group("Mesh")
 @export var marching_squares: bool = true
@@ -29,6 +31,9 @@ signal chunk_removed(chunk_index: Vector2)
 @export var grass_mesh: Mesh
 ## Material with grass shader (assign ShaderMaterial)
 @export var grass_material: Material
+## Hard cap on grass instances per chunk regardless of density_per_unit × area.
+## Prevents runaway memory use when grid_size or density is large.
+@export var grass_instances_cap: int = 4096
 
 @export_group("Materials")
 @export var materials: Array[Material]
@@ -77,6 +82,8 @@ var _player: Node3D
 
 var _loaded_chunks: Array[Node3D] = []
 var _loaded_chunk_positions := PackedVector2Array()
+# Positions of chunks that are generated and waiting in the load queue (not yet add_child'd)
+var _pending_chunk_positions := PackedVector2Array()
 var _chunk_load_queue: Array = []
 var _chunk_remove_queue: Array[int] = []
 
@@ -119,6 +126,7 @@ func clean() -> void:
 	_mutex.lock()
 	_chunk_load_queue.clear()
 	_chunk_remove_queue.clear()
+	_pending_chunk_positions = PackedVector2Array()
 	_mutex.unlock()
 
 	_thread_time = 0.0
@@ -160,9 +168,16 @@ func _map_update_loop(_unused: int) -> void:
 		)
 		var needed := _get_needed_chunks(current_chunk)
 
-		# Generate one missing chunk per tick
+		# Generate one missing chunk per tick (skip if already loaded or pending)
 		for chunk_index in needed:
-			if chunk_index not in _loaded_chunk_positions:
+			_mutex.lock()
+			var already_known: bool = chunk_index in _loaded_chunk_positions \
+				or chunk_index in _pending_chunk_positions
+			_mutex.unlock()
+			if not already_known:
+				_mutex.lock()
+				_pending_chunk_positions.append(chunk_index)
+				_mutex.unlock()
 				_generate_chunk(chunk_index)
 				break
 
@@ -174,20 +189,26 @@ func _map_update_loop(_unused: int) -> void:
 				_mutex.unlock()
 				break
 
-		if not dynamic_generation and _loaded_chunk_positions.size() == needed.size():
-			_thread_active = false
+		if not dynamic_generation:
+			_mutex.lock()
+			var all_spawned: bool = (_loaded_chunk_positions.size() + _pending_chunk_positions.size()) >= needed.size()
+			_mutex.unlock()
+			if all_spawned:
+				_thread_active = false
 
 
 func _process(delta: float) -> void:
 	_thread_time += delta
 
-	# Update player position and snapshot queues under the mutex,
-	# then process them outside to avoid holding the lock during heavy work.
+	# Snapshot only what we'll process this frame, leave the rest in the queue.
 	_mutex.lock()
 	_player_position = _player.position if _player else position
-	var load_snapshot: Array  = _chunk_load_queue.duplicate()
+	var load_snapshot: Array = []
+	var to_load: int = mini(chunks_per_frame, _chunk_load_queue.size())
+	for i in to_load:
+		load_snapshot.append(_chunk_load_queue[i])
+	_chunk_load_queue = _chunk_load_queue.slice(to_load)
 	var remove_snapshot: Array[int] = _chunk_remove_queue.duplicate()
-	_chunk_load_queue.clear()
 	_chunk_remove_queue.clear()
 	_mutex.unlock()
 
@@ -204,8 +225,9 @@ func _flush_load_queue(snapshot: Array) -> void:
 		var collision_shape            = chunk_data[1]  # CollisionShape3D or null
 		var world_origin: Vector2      = chunk_data[2]
 		var chunk_index: Vector2       = chunk_data[3]
-		# Grass transforms generated here (main thread) — safe to call generator methods
-		var grass_transforms: Array    = _generate_grass_transforms(world_origin)
+		# Grass buffer pre-built in background thread as PackedFloat32Array
+		var grass_buffer: PackedFloat32Array = chunk_data[4]
+		var grass_count: int                 = chunk_data[5]
 
 		var chunk_root := Node3D.new()
 		chunk_root.position = Vector3(world_origin.x * cell_size, 0.0, world_origin.y * cell_size)
@@ -223,13 +245,17 @@ func _flush_load_queue(snapshot: Array) -> void:
 			mesh_instance.add_child(static_body)
 
 		# Grass
-		if grass_mesh and not grass_transforms.is_empty():
-			var mmi := _build_grass_mmi(grass_transforms)
+		if grass_mesh and grass_count > 0:
+			var mmi := _build_grass_mmi(grass_buffer, grass_count)
 			chunk_root.add_child(mmi)
 
 		add_child(chunk_root)
 		_loaded_chunk_positions.append(chunk_index)
 		_loaded_chunks.append(chunk_root)
+		# Remove from pending now that it's fully spawned
+		var pending_idx := _pending_chunk_positions.find(chunk_index)
+		if pending_idx >= 0:
+			_pending_chunk_positions.remove_at(pending_idx)
 		chunk_spawned.emit(chunk_index, chunk_root)
 
 
@@ -301,8 +327,16 @@ func _generate_chunk(chunk_index: Vector2) -> void:
 		collision_shape = CollisionShape3D.new()
 		collision_shape.shape = shape
 
+	# Generate grass transforms on background thread using cached corner heights
+	var grass_buffer := PackedFloat32Array()
+	var grass_count: int = 0
+	if grass_mesh and _generator != null and _generator.has_method("get_grass"):
+		var result := _generate_grass_buffer(origin_2d, corner_heights)
+		grass_buffer = result[0]
+		grass_count  = result[1]
+
 	_mutex.lock()
-	_chunk_load_queue.append([surfaces, collision_shape, origin_2d, chunk_index])
+	_chunk_load_queue.append([surfaces, collision_shape, origin_2d, chunk_index, grass_buffer, grass_count])
 	_mutex.unlock()
 
 
@@ -513,76 +547,102 @@ func _fill8(value: int) -> PackedInt64Array:
 
 # --- Grass ---
 
-## Generates Transform3D array for grass blades across the chunk.
-## Called on the main thread so generator methods can be safely accessed.
-## origin_2d is the chunk's grid-space origin (chunk_index * grid_size).
-## Spawn logic and per-blade parameters come from generator.get_grass().
-func _generate_grass_transforms(origin_2d: Vector2) -> Array:
-	if not grass_mesh:
-		return []
-
-	var has_grass_func: bool = _generator != null and _generator.has_method("get_grass")
-	if not has_grass_func:
-		return []
-
+## Generates grass transform data as a raw PackedFloat32Array buffer.
+## Runs on the background thread — uses only local data and generator calls
+## (generator is a plain Node, safe to call from threads in Godot 4).
+## Returns [PackedFloat32Array buffer, int count].
+func _generate_grass_buffer(
+	origin_2d: Vector2,
+	corner_heights: PackedFloat64Array
+) -> Array:
 	var chunk_world := grid_size * cell_size
-	# Candidates = density per unit² × chunk area
 	var chunk_area: float = chunk_world.x * chunk_world.y
-	var density: int = int(ceil(_generator.grass_density_per_unit * chunk_area))
+	var density: int = mini(
+		int(ceil(_generator.grass_density_per_unit * chunk_area)),
+		grass_instances_cap
+	)
 	if density <= 0:
-		return []
-	var transforms: Array = []
+		return [PackedFloat32Array(), 0]
+
+	var rotation_spread: float = _generator.grass_rotation_spread
+	var scale_variation: float = _generator.grass_scale_variation
+
+	# MultiMesh Transform3D buffer: 12 floats per instance (3×4 matrix)
+	var buffer := PackedFloat32Array()
+	buffer.resize(density * 12)  # pre-allocate max size
+	var count: int = 0
 
 	var rng := RandomNumberGenerator.new()
-	# Deterministic seed per chunk so regeneration is stable
 	rng.seed = hash(origin_2d)
 
+	var stride := int(grid_size.x) * 4  # 4 corners per cell
+
 	for i in density:
-		# Local position within the chunk (chunk root is already world-offset)
 		var lx: float = rng.randf() * chunk_world.x
 		var lz: float = rng.randf() * chunk_world.y
 
-		# Grid-space position for generator queries
 		var grid_pos := origin_2d + Vector2(lx, lz) / cell_size
 
-		# World-space height (scaled to match mesh vertices)
+		# Sample height from cached corner_heights using bilinear interpolation
 		var ly: float = 0.0
-		if _generator_has_height:
+		if _generator_has_height and corner_heights.size() > 0:
+			ly = _sample_height_at(lx, lz, corner_heights, stride) * cell_size
+		elif _generator_has_height:
 			ly = _generator.get_height(grid_pos) * cell_size
 
-		# Ask generator whether to spawn here and with what parameters
 		var tile: int = _generator.get_value(grid_pos) if _generator_has_value else 0
-		var grass_params: Dictionary = _generator.get_grass(grid_pos, tile, ly)
+		var grass_params: Dictionary = _generator.get_grass(grid_pos, tile, ly, rng.randf())
 		if not grass_params.get("spawn", false):
 			continue
 
-		# Y rotation: use generator value if provided, otherwise random
 		var raw_rotation: float = grass_params.get("rotation", -1.0)
 		var angle: float = raw_rotation if raw_rotation >= 0.0 \
-			else deg_to_rad(rng.randf_range(0.0, _generator.grass_rotation_spread))
-		var basis := Basis(Vector3.UP, angle)
+			else deg_to_rad(rng.randf_range(0.0, rotation_spread))
 
-		# Scale: generator base scale × random variation from generator
 		var gen_scale: float  = grass_params.get("scale", 1.0)
-		var variation: float  = _generator.grass_scale_variation
-		var rand_scale: float = 1.0 + rng.randf_range(-variation, variation)
-		basis = basis.scaled(Vector3.ONE * gen_scale * rand_scale)
+		var rand_scale: float = gen_scale * (1.0 + rng.randf_range(-scale_variation, scale_variation))
 
-		transforms.append(Transform3D(basis, Vector3(lx, ly, lz)))
+		var cos_a: float = cos(angle) * rand_scale
+		var sin_a: float = sin(angle) * rand_scale
+		var base: int = count * 12
+		# Row 0: X axis
+		buffer[base + 0]  = cos_a;  buffer[base + 1]  = 0.0;  buffer[base + 2]  = sin_a;  buffer[base + 3]  = lx
+		# Row 1: Y axis
+		buffer[base + 4]  = 0.0;    buffer[base + 5]  = rand_scale; buffer[base + 6]  = 0.0;    buffer[base + 7]  = ly
+		# Row 2: Z axis
+		buffer[base + 8]  = -sin_a; buffer[base + 9]  = 0.0;  buffer[base + 10] = cos_a;  buffer[base + 11] = lz
+		count += 1
 
-	return transforms
+	# Trim buffer to actual count
+	buffer.resize(count * 12)
+	return [buffer, count]
 
 
-## Builds a MultiMeshInstance3D from pre-computed transforms.
+## Bilinear height sample from the cached corner_heights array.
+## lx/lz are local chunk coordinates (world units).
+func _sample_height_at(lx: float, lz: float, corner_heights: PackedFloat64Array, stride: int) -> float:
+	var col: int = clamp(int(lx / cell_size), 0, int(grid_size.x) - 1)
+	var row: int = clamp(int(lz / cell_size), 0, int(grid_size.y) - 1)
+	var base: int = row * stride + col * 4
+	if base + 3 >= corner_heights.size():
+		return 0.0
+	var h0: float = corner_heights[base + 0]
+	var h1: float = corner_heights[base + 1]
+	var h2: float = corner_heights[base + 2]
+	var h3: float = corner_heights[base + 3]
+	var fx: float = fmod(lx / cell_size, 1.0)
+	var fz: float = fmod(lz / cell_size, 1.0)
+	return lerp(lerp(h0, h1, fx), lerp(h2, h3, fx), fz)
+
+
+## Builds a MultiMeshInstance3D from a pre-built float buffer.
 ## Must be called on the main thread.
-func _build_grass_mmi(transforms: Array) -> MultiMeshInstance3D:
+func _build_grass_mmi(buffer: PackedFloat32Array, count: int) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.mesh = grass_mesh
-	mm.instance_count = transforms.size()
-
-	for i in transforms.size():
-		mm.set_instance_transform(i, transforms[i])
+	mm.instance_count = count
+	mm.buffer = buffer
 
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm

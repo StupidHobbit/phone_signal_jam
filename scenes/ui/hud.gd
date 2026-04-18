@@ -2,6 +2,7 @@ extends CanvasLayer
 
 @onready var health_bar: ProgressBar = $MarginContainer/VBox/HealthBar
 @onready var score_label: Label = $MarginContainer/VBox/ScoreLabel
+@onready var fps_label: Label = $FpsLabel
 @onready var crosshair: TextureRect = $Crosshair
 @onready var interact_hint: Label = $InteractHint
 @onready var pause_menu: Control = $PauseMenu
@@ -54,6 +55,10 @@ func _on_game_paused(is_paused: bool) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	else:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+
+
+func _process(_delta: float) -> void:
+	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
 
 
 func _on_game_over() -> void:

@@ -3,6 +3,7 @@
 [ext_resource type="Shader" uid="uid://c6550gj3qb8y4" path="res://assets/shaders/grass.gdshader" id="1_prref"]
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_hujxm"]
+fractal_type = 2
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_yyfjg"]
 noise = SubResource("FastNoiseLite_hujxm")
@@ -10,7 +11,9 @@ seamless = true
 in_3d_space = true
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_ow5a4"]
+frequency = 0.0043
 fractal_type = 2
+fractal_gain = 0.45
 
 [sub_resource type="NoiseTexture2D" id="NoiseTexture2D_hujxm"]
 noise = SubResource("FastNoiseLite_ow5a4")
