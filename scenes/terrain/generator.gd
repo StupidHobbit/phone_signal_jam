@@ -18,8 +18,30 @@ extends Node
 ## How much the detail layer contributes relative to hills (0–1)
 @export var detail_strength: float = 0.15
 
-# Single tile index — grass
+# --- Grass settings ---
+
+@export_group("Grass")
+## Enable grass spawning
+@export var grass_enabled: bool = true
+## Number of grass instances per chunk
+@export var grass_density: int = 1024
+## Random Y-axis rotation range in degrees
+@export var grass_rotation_spread: float = 360.0
+## Minimum terrain height (world units) at which grass spawns
+@export var grass_min_height: float = -100.0
+## Maximum terrain height (world units) at which grass spawns
+@export var grass_max_height: float = 100.0
+## Probability of spawning grass at a given point (0–1)
+@export var grass_density_curve: Curve
+
 const TILE_GRASS := 0
+const TILE_GRASS_TO_ROCK := 1
+const TILE_ROCK := 2
+const TILE_DIRT := 3
+const TILE_DIRT_TO_GRASS := 4
+const TILE_PATH := 5
+const TILE_PATH_TO_GRASS := 6
+const TILE_PATH_TO_DIRT := 7
 
 
 func _ready() -> void:
@@ -47,6 +69,41 @@ func get_height(pos: Vector2) -> float:
 		h += detail_noise.get_noise_2dv(pos) * detail_strength
 
 	return h
+
+
+## Returns grass spawn parameters for a given position.
+## Called by SimplePCGTerrain for each candidate grass blade.
+##
+## Parameters:
+##   pos    — grid-space 2D position
+##   tile   — tile index at this position (from get_value)
+##   height — world-space height at this position (from get_height * cell_size)
+##
+## Returns a Dictionary:
+##   { "spawn": bool,   — whether to place a blade here
+##     "rotation": float } — Y rotation in radians (or -1 to use random)
+func get_grass(pos: Vector2, tile: int, height: float) -> Dictionary:
+	var result := {"spawn": false, "rotation": -1.0}
+
+	if not grass_enabled:
+		return result
+
+	# Height filter
+	if height < grass_min_height or height > grass_max_height:
+		return result
+
+	# Optional density curve: maps normalised height to spawn probability
+	if grass_density_curve:
+		var height_range: float = grass_max_height - grass_min_height
+		var t: float = clampf((height - grass_min_height) / height_range, 0.0, 1.0)
+		var probability: float = grass_density_curve.sample(t)
+		if randf() > probability:
+			return result
+
+	result["spawn"] = true
+
+	result["scale"] = 1
+	return result
 
 
 # --- Input: press Enter to regenerate ---

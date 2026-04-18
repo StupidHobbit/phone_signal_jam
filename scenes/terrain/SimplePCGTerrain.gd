@@ -24,6 +24,12 @@ signal chunk_removed(chunk_index: Vector2)
 ## Size of each grid cell in world units. Decrease for more detailed terrain.
 @export var cell_size: float = 1.0
 
+@export_group("Grass")
+## Mesh to use for grass blades (assign grass.res)
+@export var grass_mesh: Mesh
+## Material with grass shader (assign ShaderMaterial)
+@export var grass_material: Material
+
 @export_group("Materials")
 @export var materials: Array[Material]
 @export var material_filters: Array[int]   # ALL=0, WHITELIST=1, BLACKLIST=2
@@ -175,54 +181,67 @@ func _map_update_loop(_unused: int) -> void:
 func _process(delta: float) -> void:
 	_thread_time += delta
 
+	# Update player position and snapshot queues under the mutex,
+	# then process them outside to avoid holding the lock during heavy work.
 	_mutex.lock()
-	var player_pos := position if not _player else _player.position
-	_player_position = player_pos
-
-	_flush_load_queue()
-	_flush_remove_queue()
+	_player_position = _player.position if _player else position
+	var load_snapshot: Array  = _chunk_load_queue.duplicate()
+	var remove_snapshot: Array[int] = _chunk_remove_queue.duplicate()
+	_chunk_load_queue.clear()
+	_chunk_remove_queue.clear()
 	_mutex.unlock()
 
+	_flush_load_queue(load_snapshot)
+	_flush_remove_queue(remove_snapshot)
 
-func _flush_load_queue() -> void:
-	if _chunk_load_queue.is_empty():
+
+func _flush_load_queue(snapshot: Array) -> void:
+	if snapshot.is_empty():
 		return
 
-	for chunk_data in _chunk_load_queue:
-		var surfaces: Array       = chunk_data[0]
-		var collision_shape       = chunk_data[1]  # CollisionShape3D or null
-		var world_origin: Vector2 = chunk_data[2]
-		var chunk_index: Vector2  = chunk_data[3]
+	for chunk_data in snapshot:
+		var surfaces: Array            = chunk_data[0]
+		var collision_shape            = chunk_data[1]  # CollisionShape3D or null
+		var world_origin: Vector2      = chunk_data[2]
+		var chunk_index: Vector2       = chunk_data[3]
+		# Grass transforms generated here (main thread) — safe to call generator methods
+		var grass_transforms: Array    = _generate_grass_transforms(world_origin)
 
+		var chunk_root := Node3D.new()
+		chunk_root.position = Vector3(world_origin.x * cell_size, 0.0, world_origin.y * cell_size)
+
+		# Terrain mesh
 		var mesh_instance := MeshInstance3D.new()
-		mesh_instance.position = Vector3(world_origin.x * cell_size, 0.0, world_origin.y * cell_size)
-
 		if not surfaces.is_empty():
 			mesh_instance.mesh = surfaces[0]
+		chunk_root.add_child(mesh_instance)
 
+		# Collision
 		if collision_shape:
 			var static_body := StaticBody3D.new()
 			static_body.add_child(collision_shape)
 			mesh_instance.add_child(static_body)
 
-		add_child(mesh_instance)
+		# Grass
+		if grass_mesh and not grass_transforms.is_empty():
+			var mmi := _build_grass_mmi(grass_transforms)
+			chunk_root.add_child(mmi)
+
+		add_child(chunk_root)
 		_loaded_chunk_positions.append(chunk_index)
-		_loaded_chunks.append(mesh_instance)
-		chunk_spawned.emit(chunk_index, mesh_instance)
-
-	_chunk_load_queue.clear()
+		_loaded_chunks.append(chunk_root)
+		chunk_spawned.emit(chunk_index, chunk_root)
 
 
-func _flush_remove_queue() -> void:
-	if _chunk_remove_queue.is_empty():
+func _flush_remove_queue(snapshot: Array[int]) -> void:
+	if snapshot.is_empty():
 		return
 
 	# Sort descending so removing by index doesn't shift earlier indices
-	_chunk_remove_queue.sort()
-	_chunk_remove_queue.reverse()
-	for idx in _chunk_remove_queue:
+	snapshot.sort()
+	snapshot.reverse()
+	for idx in snapshot:
 		_remove_chunk(idx)
-	_chunk_remove_queue.clear()
 
 
 func _remove_chunk(index: int) -> void:
@@ -490,3 +509,77 @@ func _marching_squares(c: PackedInt64Array) -> PackedInt64Array:
 
 func _fill8(value: int) -> PackedInt64Array:
 	return PackedInt64Array([value, value, value, value, value, value, value, value])
+
+
+# --- Grass ---
+
+## Generates Transform3D array for grass blades across the chunk.
+## Called on the main thread so generator methods can be safely accessed.
+## origin_2d is the chunk's grid-space origin (chunk_index * grid_size).
+## Spawn logic and per-blade parameters come from generator.get_grass().
+func _generate_grass_transforms(origin_2d: Vector2) -> Array:
+	if not grass_mesh:
+		return []
+
+	var has_grass_func: bool = _generator != null and _generator.has_method("get_grass")
+	var density: int = _generator.grass_density if has_grass_func else 0
+	if density <= 0:
+		return []
+
+	var chunk_world := grid_size * cell_size
+	var transforms: Array = []
+
+	var rng := RandomNumberGenerator.new()
+	# Deterministic seed per chunk so regeneration is stable
+	rng.seed = hash(origin_2d)
+
+	for i in density:
+		# Local position within the chunk (chunk root is already world-offset)
+		var lx: float = rng.randf() * chunk_world.x
+		var lz: float = rng.randf() * chunk_world.y
+
+		# Grid-space position for generator queries
+		var grid_pos := origin_2d + Vector2(lx, lz) / cell_size
+
+		# World-space height (scaled to match mesh vertices)
+		var ly: float = 0.0
+		if _generator_has_height:
+			ly = _generator.get_height(grid_pos) * cell_size
+
+		# Ask generator whether to spawn here and with what parameters
+		var tile: int = _generator.get_value(grid_pos) if _generator_has_value else 0
+		var grass_params: Dictionary = _generator.get_grass(grid_pos, tile, ly)
+		if not grass_params.get("spawn", false):
+			continue
+
+		# Y rotation: use generator value if provided, otherwise random
+		var raw_rotation: float = grass_params.get("rotation", -1.0)
+		var angle: float
+		if raw_rotation >= 0.0:
+			angle = raw_rotation
+		else:
+			angle = deg_to_rad(rng.randf_range(0.0, 360.0))
+		var basis := Basis(Vector3.UP, angle)
+
+		transforms.append(Transform3D(basis, Vector3(lx, ly, lz)))
+
+	return transforms
+
+
+## Builds a MultiMeshInstance3D from pre-computed transforms.
+## Must be called on the main thread.
+func _build_grass_mmi(transforms: Array) -> MultiMeshInstance3D:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = grass_mesh
+	mm.instance_count = transforms.size()
+
+	for i in transforms.size():
+		mm.set_instance_transform(i, transforms[i])
+
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if grass_material:
+		mmi.material_override = grass_material
+	return mmi
