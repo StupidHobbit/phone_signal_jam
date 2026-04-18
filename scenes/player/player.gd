@@ -18,6 +18,9 @@ signal interacted(interactable: Node3D)
 @export_group("Interaction")
 @export var interact_distance: float = 2.5
 
+@export_group("Environment")
+@export var grass: MultiMeshInstance3D
+
 @onready var camera_pivot: Node3D = $CameraPivot
 @onready var camera: Camera3D = $CameraPivot/Camera3D
 @onready var interact_ray: RayCast3D = $CameraPivot/Camera3D/InteractRay
@@ -39,6 +42,8 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _physics_process(delta: float) -> void:
+	if grass != null:
+		grass.material_override.set_shader_parameter("object_position", position)
 	_apply_gravity(delta)
 	_handle_jump()
 	_handle_movement(delta)

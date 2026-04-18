@@ -1,0 +1,11 @@
+[gd_scene format=3 uid="uid://kb6rsw2fysqy"]
+
+[ext_resource type="ArrayMesh" uid="uid://b4kxsn70tolvq" path="res://assets/models/environment/grass.res" id="1_3pp8o"]
+
+[sub_resource type="MultiMesh" id="MultiMesh_xdhqv"]
+instance_count = 5
+mesh = ExtResource("1_3pp8o")
+buffer = PackedFloat32Array(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+[node name="Grass" type="MultiMeshInstance3D" unique_id=1262750411]
+multimesh = SubResource("MultiMesh_xdhqv")

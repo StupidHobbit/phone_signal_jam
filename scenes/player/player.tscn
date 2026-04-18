@@ -1,29 +1,26 @@
-[gd_scene load_steps=4 format=3]
+[gd_scene format=3 uid="uid://bydf8hwt3awx8"]
 
-[ext_resource type="Script" path="res://scenes/player/player.gd" id="1_player"]
+[ext_resource type="Script" uid="uid://ybvjawrs73kj" path="res://scenes/player/player.gd" id="1_player"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1"]
 radius = 0.4
 height = 1.8
 
-[node name="Player" type="CharacterBody3D"]
+[node name="Player" type="CharacterBody3D" unique_id=2076523532]
 script = ExtResource("1_player")
-groups = ["player"]
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1622322844]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.9, 0)
 shape = SubResource("CapsuleShape3D_1")
 
-[node name="MeshRoot" type="Node3D" parent="."]
+[node name="MeshRoot" type="Node3D" parent="." unique_id=1749624358]
 
-[node name="CameraPivot" type="Node3D" parent="."]
+[node name="CameraPivot" type="Node3D" parent="." unique_id=1002522133]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.6, 0)
 
-[node name="Camera3D" type="Camera3D" parent="CameraPivot"]
-fov = 75.0
+[node name="Camera3D" type="Camera3D" parent="CameraPivot" unique_id=304729266]
 
-[node name="InteractRay" type="RayCast3D" parent="CameraPivot/Camera3D"]
+[node name="InteractRay" type="RayCast3D" parent="CameraPivot/Camera3D" unique_id=202959575]
 target_position = Vector3(0, 0, -2.5)
-enabled = true
 
-[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
+[node name="AnimationPlayer" type="AnimationPlayer" parent="." unique_id=333334995]
