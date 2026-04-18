@@ -69,4 +69,4 @@ hills_noise = SubResource("FastNoiseLite_b1x3f")
 detail_noise = SubResource("FastNoiseLite_a8run")
 height_scale = 60.0
 detail_strength = 1.0
-grass_density = 2048
+grass_density_per_unit = 50.0

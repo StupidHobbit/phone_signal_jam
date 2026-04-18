@@ -522,11 +522,15 @@ func _generate_grass_transforms(origin_2d: Vector2) -> Array:
 		return []
 
 	var has_grass_func: bool = _generator != null and _generator.has_method("get_grass")
-	var density: int = _generator.grass_density if has_grass_func else 0
-	if density <= 0:
+	if not has_grass_func:
 		return []
 
 	var chunk_world := grid_size * cell_size
+	# Candidates = density per unit² × chunk area
+	var chunk_area: float = chunk_world.x * chunk_world.y
+	var density: int = int(ceil(_generator.grass_density_per_unit * chunk_area))
+	if density <= 0:
+		return []
 	var transforms: Array = []
 
 	var rng := RandomNumberGenerator.new()
@@ -554,12 +558,15 @@ func _generate_grass_transforms(origin_2d: Vector2) -> Array:
 
 		# Y rotation: use generator value if provided, otherwise random
 		var raw_rotation: float = grass_params.get("rotation", -1.0)
-		var angle: float
-		if raw_rotation >= 0.0:
-			angle = raw_rotation
-		else:
-			angle = deg_to_rad(rng.randf_range(0.0, 360.0))
+		var angle: float = raw_rotation if raw_rotation >= 0.0 \
+			else deg_to_rad(rng.randf_range(0.0, _generator.grass_rotation_spread))
 		var basis := Basis(Vector3.UP, angle)
+
+		# Scale: generator base scale × random variation from generator
+		var gen_scale: float  = grass_params.get("scale", 1.0)
+		var variation: float  = _generator.grass_scale_variation
+		var rand_scale: float = 1.0 + rng.randf_range(-variation, variation)
+		basis = basis.scaled(Vector3.ONE * gen_scale * rand_scale)
 
 		transforms.append(Transform3D(basis, Vector3(lx, ly, lz)))
 
